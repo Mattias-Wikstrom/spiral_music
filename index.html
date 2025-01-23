@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Spiral Music</title>
+  <style>
+    canvas {
+      display: block;
+      margin: auto;
+      background: #000;
+    }
+
+    .fade-out {
+      opacity: 0;
+      transition: opacity 0.4s ease-out; /* Adjust timing and easing as desired */
+    }
+  </style>
+</head>
+<body>
+  <br>
+  <legend style="display: block; margin: auto; max-width: 800px;">Click on the canvas to play a note.</legend>
+  <br>
+  <canvas id="spiralCanvas" width="800" height="800"></canvas>
+  <div id="textOverlay" style="position: absolute; pointer-events: none; padding: 10px; background: radial-gradient(circle at 10px 10px, white 2px, transparent 6px);"></div>
+
+  <script>
+    // Initialize WebGL context
+    const canvas = document.getElementById("spiralCanvas");
+    const gl = canvas.getContext("webgl");
+
+    if (!gl) {
+      console.error("WebGL not supported.");
+      throw new Error("WebGL not supported");
+    }
+
+    // Shader sources
+    const vertexShaderSource = `
+      attribute vec2 aPosition;
+      void main() {
+        gl_Position = vec4(aPosition, 0.0, 1.0);
+        gl_PointSize = 2.0;
+      }
+    `;
+
+    const fragmentShaderSource = `
+      precision mediump float;
+
+      uniform vec4 uColor;
+
+      void main() {
+        gl_FragColor = uColor;
+      }
+    `;
+
+    // Compile shaders
+    function createShader(gl, type, source) {
+      const shader = gl.createShader(type);
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        console.error(gl.getShaderInfoLog(shader));
+        gl.deleteShader(shader);
+        return null;
+      }
+      return shader;
+    }
+
+    const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
+    const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
+
+    // Create program
+    const program = gl.createProgram();
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      console.error(gl.getProgramInfoLog(program));
+      gl.deleteProgram(program);
+      throw new Error("Failed to link program");
+    }
+
+    gl.useProgram(program);
+
+    function generateLogarithmicSpiral(a, initialAngle, numPoints) {
+      const vertices = [];
+      
+      const maxTheta = 8 * 2 * Math.PI;
+
+      for (let i = 0; i < numPoints; i++) {
+        const theta = (i / numPoints) * maxTheta;
+        const r = a * Math.exp((theta / 2.0 / Math.PI) * Math.log(2));
+        const x = r * Math.cos(theta + initialAngle);
+        const y = r * Math.sin(theta + initialAngle);
+        vertices.push(x, y);
+      }
+
+      return new Float32Array(vertices);
+    }
+
+    function generateCircle(r, numPoints) {
+      const vertices = [];
+
+      const maxTheta = 2 * Math.PI;
+      
+      for (let i = 0; i < numPoints; i++) {
+        const theta = (i / numPoints) * maxTheta;
+        const x = r * Math.cos(theta);
+        const y = r * Math.sin(theta);
+
+        vertices.push(x, y);
+      }
+
+      return new Float32Array(vertices);
+    }
+
+    function generateLine(angle) {
+      const vertices = [];
+
+      vertices.push(0, 0);
+      vertices.push(2 * Math.cos(angle), 2 * Math.sin(angle));
+
+      return new Float32Array(vertices);
+    }
+
+    const numPointsOnEachLine = 1000;
+
+    // 10 circles would be enough, but for the fact that the canvas is square-shaped
+    const numCircles = Math.floor(10 * Math.sqrt(2)); 
+    
+    const numSpirals = 1;
+    const numLines = 12;
+
+    // Create and bind buffers for lines, circles, and spirals
+    const lineBuffer = gl.createBuffer();
+    const circleBuffer = gl.createBuffer();
+    const spiralBuffer = gl.createBuffer();
+
+    // Generate and bind line data
+    const lineVertices = [];
+    for (let k = 0; k < numLines; k++) {
+      const vertices = generateLine(k * 2 * Math.PI / numLines);
+      lineVertices.push(...vertices);
+    }
+
+    const combinedLineVertices = new Float32Array(lineVertices);
+    gl.bindBuffer(gl.ARRAY_BUFFER, lineBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, combinedLineVertices, gl.STATIC_DRAW);
+
+    // Generate and bind circle data
+    const circleVertices = [];
+    for (let k = 0; k < numCircles; k++) {
+      const vertices = generateCircle((1 + k) * 0.1, numPointsOnEachLine);
+      circleVertices.push(...vertices);
+    }
+
+    const combinedCircleVertices = new Float32Array(circleVertices);
+    gl.bindBuffer(gl.ARRAY_BUFFER, circleBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, combinedCircleVertices, gl.STATIC_DRAW);
+
+    // Generate and bind spiral data
+    const spiralVertices = [];
+    for (let k = 0; k < numSpirals; k++) {
+      const vertices = generateLogarithmicSpiral(0.1, k * 2 * Math.PI / numSpirals, numPointsOnEachLine);
+      spiralVertices.push(...vertices);
+    }
+
+    const combinedSpiralVertices = new Float32Array(spiralVertices);
+    gl.bindBuffer(gl.ARRAY_BUFFER, spiralBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, combinedSpiralVertices, gl.STATIC_DRAW);
+
+    // Bind attribute location for all buffers
+    const positionAttributeLocation = gl.getAttribLocation(program, "aPosition");
+    gl.enableVertexAttribArray(positionAttributeLocation);
+
+    const colorUniformLocation = gl.getUniformLocation(program, "uColor");
+
+    // Render the shapes
+    function render() {
+      gl.clearColor(0, 0, 0, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+
+      // Render lines
+      if (numLines > 0) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, lineBuffer);
+        gl.vertexAttribPointer(positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
+
+        gl.uniform4f(colorUniformLocation, 0.5, 0.5, 0.5, 1.0);
+        
+        for (let k = 0; k < numLines; k++) {
+          gl.drawArrays(gl.LINE_STRIP, k * numPointsOnEachLine, numPointsOnEachLine);
+        }
+      }
+
+      // Render circles
+      if (numCircles > 0) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, circleBuffer);
+        gl.vertexAttribPointer(positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
+
+        gl.uniform4f(colorUniformLocation, 0.7, 0.7, 0.7, 1.0); // Set color to red
+
+        for (let k = 0; k < numCircles; k++) {
+          gl.drawArrays(gl.LINE_STRIP, k * numPointsOnEachLine, numPointsOnEachLine);
+        }
+      }
+
+      // Render spirals
+      if (numSpirals > 0) {
+        gl.bindBuffer(gl.ARRAY_BUFFER, spiralBuffer);
+        gl.vertexAttribPointer(positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
+
+        gl.uniform4f(colorUniformLocation, 0.0, 0.0, 1.0, 1.0); // Set color to green
+
+        for (let k = 0; k < numSpirals; k++) {
+          gl.drawArrays(gl.LINE_STRIP, k * numPointsOnEachLine, numPointsOnEachLine);
+        }
+      }
+    }
+
+    render();
+
+    const noteFromInt = ["A", "A#", "B", "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#"];
+
+    let hideOverlayTimeout = null;
+    const textOverlay = document.getElementById("textOverlay");
+
+    canvas.addEventListener("click", (event) => {
+      // Position the text label that displays the frequency
+      textOverlay.style.left = `${event.clientX + window.scrollX - 10}px`;
+      textOverlay.style.top = `${event.clientY + window.scrollY - 10}px`;
+      textOverlay.style.color = 'white';
+      textOverlay.style.fontFamily = 'Arial';
+      textOverlay.classList.remove("fade-out");
+
+      // Determine the frequency
+      const x = 2 * (event.offsetX / canvas.width - 0.5);
+      const y = 2 * (event.offsetY / canvas.height - 0.5);
+
+      const frequency = Math.floor(1100 * Math.sqrt(x * x + y * y) + 0.5);
+
+      // Determine the octave and the particular note within the octave
+      const v1 = 24 + 12 * Math.log2(frequency / 110);
+      const v2 = Math.floor(v1 + 0.5);
+      const octave = Math.floor(v2 / 12);
+      const noteAsInt = v2 - 12 * octave;
+
+      textOverlay.innerHTML = "" + frequency + " Hz" + "<br>" + noteFromInt[noteAsInt] + "" + octave;
+
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      oscillator.type = 'sine'; // Change to 'square', 'sawtooth', or 'triangle' for different sounds
+      oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime); // A4 note (440 Hz)
+      
+      // Create a GainNode to control volume
+      const gainNode = audioContext.createGain();
+      gainNode.gain.setValueAtTime(0.5, audioContext.currentTime); // Volume (0.0 to 1.0)
+
+      // Connect the oscillator to the gain node and the gain node to the output
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+
+      // Start and stop the sound
+      oscillator.start(); // Play the sound
+      oscillator.stop(audioContext.currentTime + 2); // Stop after 2 seconds
+
+      // Use a timeout to hide the text label that displays the frequency and the note
+      if (hideOverlayTimeout)
+      {
+        clearTimeout(hideOverlayTimeout);
+      }
+
+      hideOverlayTimeout = setTimeout(() => {
+        textOverlay.classList.add("fade-out");
+      }, 2000);
+    });
+  </script>
+</body>
+</html>
